@@ -1,5 +1,56 @@
-// Biosphere Tools - Thermostat and Fans with adjustable settings
-// Shift-click to configure strength/temperature before placing
+// Biosphere Tools - Thermostat, Fans, and Producer
+// Shift-click to configure before placing
+
+// ============ PRODUCER ============
+// Like spout but for any element
+
+var producerSettings = {
+    element: "water",
+    rate: 0.1  // chance per tick per adjacent cell
+};
+
+elements.producer = {
+    color: "#606378",
+    behavior: behaviors.WALL,
+    onShiftSelect: function(el) {
+        promptInput("Element to produce:", function(e) {
+            if (!elements[e]) {
+                console.log("Unknown element: " + e);
+                return;
+            }
+            producerSettings.element = e;
+            promptInput("Rate (0-1, chance per tick):", function(r) {
+                r = parseFloat(r);
+                if (isNaN(r) || r <= 0 || r > 1) return;
+                producerSettings.rate = r;
+            }, "0.1");
+        }, "water");
+    },
+    tick: function(pixel) {
+        var elem = pixel.produceElement || producerSettings.element;
+        var rate = pixel.produceRate || producerSettings.rate;
+
+        for (var i = 0; i < adjacentCoords.length; i++) {
+            if (Math.random() > rate) continue;
+            var x = pixel.x + adjacentCoords[i][0];
+            var y = pixel.y + adjacentCoords[i][1];
+            if (isEmpty(x, y)) {
+                createPixel(elem, x, y);
+            }
+        }
+    },
+    properties: {
+        produceElement: "water",
+        produceRate: 0.1
+    },
+    onPlace: function(pixel) {
+        pixel.produceElement = producerSettings.element;
+        pixel.produceRate = producerSettings.rate;
+    },
+    category: "machines",
+    movable: false,
+    desc: "Produces any element. Shift-click to configure."
+};
 
 // ============ THERMOSTAT ============
 
