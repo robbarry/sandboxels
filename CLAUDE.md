@@ -114,3 +114,20 @@ mods/               # 500+ community mods
 lang/               # 51 language translation files
 icons/              # Favicons and app icons
 ```
+
+## Git Remotes
+
+- `origin` - Upstream repo (R74nCom/sandboxels) - read-only
+- `fork` - Rob's fork (robbarry/sandboxels) - push here
+
+## Custom Mods
+
+### `mods/thermostat.js`
+
+Biosphere tools mod with:
+
+- **thermostat**: Heats/cools neighbors to a target temperature (shift-click to set). Unlike the built-in heater, it stops when target is reached.
+- **producer**: Like spout but for any element. Shift-click to set element and rate.
+- **fan_up/down/left/right**: Wind with inverse-square falloff. Adds velocity (requires `velocity.js`). Shift-click to set force.
+
+Enable with `velocity.js` for physics-based fan behavior.
