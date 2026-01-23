@@ -66,6 +66,33 @@ elements.water = {
 };
 ```
 
+### Behavior Matrix DSL
+
+The 3x3 behavior matrix represents positions relative to the pixel (top row, middle row, bottom row). Codes are pipe-separated:
+
+```
+Position grid:          Example: behaviors.POWDER
+[-1,-1] [0,-1] [1,-1]   "XX|XX|XX"      (top: do nothing)
+[-1, 0] [0, 0] [1, 0]   "XX|XX|XX"      (middle: do nothing)
+[-1,+1] [0,+1] [1,+1]   "M2|M1|M2"      (bottom: move down-center first, then diagonals)
+```
+
+**Movement codes:**
+- `M1`, `M2` - Move with priority (lower = tried first)
+- `XX` - Do nothing
+- `DB` - Die in bounds (delete if at edge)
+
+**Interaction codes:**
+- `CR:element%chance` - Create element (e.g., `CR:foam%2` = 2% chance to create foam)
+- `CH:elem1,elem2%chance` - Change self to one of listed elements
+- `SW:elem1,elem2%chance` - Swap with adjacent element if it matches list
+- `DL%chance` - Delete self
+- `EX:radius` - Explode
+
+**Conditionals:**
+- Codes can be combined with `AND` (e.g., `CR:steam%5 AND M1`)
+- `%` suffix sets probability (e.g., `M1%50` = 50% chance to move)
+
 ### Core Functions
 
 - `createPixel(element, x, y)` - Create a new pixel
@@ -73,7 +100,10 @@ elements.water = {
 - `changePixel(pixel, newElement)` - Transform pixel to different element
 - `tryMove(pixel, x, y)` - Attempt to move pixel (returns success)
 - `doDefaults(pixel)` - Apply default behaviors (heat, burning, etc.)
-- `isEmpty(x, y)` - Check if position is empty
+- `isEmpty(x, y, orite)` - Check if position is empty (orOutOfBounds if true)
+- `pixelTempCheck(pixel)` - Apply temperature state changes
+- `chargePixel(pixel)` - Apply electrical charge
+- `adjacentCoords` - Array of [dx,dy] offsets for 8 neighbors: `[[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]]`
 
 ## Modding
 
@@ -103,6 +133,24 @@ elements.water.reactions.my_element = { elem1: "steam", elem2: null };
 
 **Modding documentation**: https://sandboxels.wiki.gg/wiki/Modding
 
+**Useful mod patterns:**
+```javascript
+// Run code after all elements loaded (for modifying existing elements)
+runAfterLoad(function() {
+    elements.water.reactions.my_element = { elem1: "steam", elem2: null };
+});
+
+// Shift-click configuration (like cloner, spout, thermostat)
+elements.my_machine = {
+    onShiftSelect: function(element) {
+        promptInput("Enter value:", function(r) {
+            currentElementProp = { myProp: r };
+        });
+    },
+    // ... rest of element
+};
+```
+
 ## File Layout
 
 ```
@@ -115,10 +163,22 @@ lang/               # 51 language translation files
 icons/              # Favicons and app icons
 ```
 
+## Testing Controls
+
+When testing in browser:
+- **Left Click** = Draw, **Right Click** = Erase, **Middle Click** = Pick element
+- **Space/P** = Pause, **>** = Single step frame
+- **Shift + Click** = Draw line
+- **Shift + Heat/Cool/Shock** = Intensify effect
+- **E** = Select element by name, **I or /** = Element info
+- **1234** = Change view mode (normal, heat, debug, etc.)
+
 ## Git Remotes
 
 - `origin` - Upstream repo (R74nCom/sandboxels) - read-only
 - `fork` - Rob's fork (robbarry/sandboxels) - push here
+- **GitHub Pages**: https://robbarry.github.io/sandboxels/
+- **Mods URL**: https://robbarry.github.io/sandboxels/mods/
 
 ## Custom Mods
 
