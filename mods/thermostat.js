@@ -9,6 +9,20 @@ var producerSettings = {
     rate: 0.1  // chance per tick per adjacent cell
 };
 
+function producerTick(pixel) {
+    var elem = pixel.produceElement || producerSettings.element;
+    var rate = pixel.produceRate || producerSettings.rate;
+
+    for (var i = 0; i < adjacentCoords.length; i++) {
+        if (Math.random() > rate) continue;
+        var x = pixel.x + adjacentCoords[i][0];
+        var y = pixel.y + adjacentCoords[i][1];
+        if (isEmpty(x, y)) {
+            createPixel(elem, x, y);
+        }
+    }
+}
+
 elements.producer = {
     color: "#606378",
     behavior: behaviors.WALL,
@@ -26,19 +40,7 @@ elements.producer = {
             }, "0.1");
         }, "water");
     },
-    tick: function(pixel) {
-        var elem = pixel.produceElement || producerSettings.element;
-        var rate = pixel.produceRate || producerSettings.rate;
-
-        for (var i = 0; i < adjacentCoords.length; i++) {
-            if (Math.random() > rate) continue;
-            var x = pixel.x + adjacentCoords[i][0];
-            var y = pixel.y + adjacentCoords[i][1];
-            if (isEmpty(x, y)) {
-                createPixel(elem, x, y);
-            }
-        }
-    },
+    tick: producerTick,
     properties: {
         produceElement: "water",
         produceRate: 0.1
@@ -51,6 +53,30 @@ elements.producer = {
     movable: false,
     desc: "Produces any element. Shift-click to configure."
 };
+
+// Pre-configured producers for mobile/convenience
+function makeProducer(element, color, rate) {
+    return {
+        color: color,
+        behavior: behaviors.WALL,
+        tick: producerTick,
+        properties: {
+            produceElement: element,
+            produceRate: rate || 0.1
+        },
+        category: "machines",
+        movable: false,
+        desc: "Produces " + element + "."
+    };
+}
+
+elements.co2_producer = makeProducer("carbon_dioxide", "#445566");
+elements.oxygen_producer = makeProducer("oxygen", "#6688aa");
+elements.helium_producer = makeProducer("helium", "#ffccee");
+elements.nitrogen_producer = makeProducer("nitrogen", "#556677");
+elements.steam_producer = makeProducer("steam", "#aabbcc");
+elements.water_producer = makeProducer("water", "#3377bb");
+elements.fire_producer = makeProducer("fire", "#cc4422", 0.2);
 
 // ============ THERMOSTAT ============
 
