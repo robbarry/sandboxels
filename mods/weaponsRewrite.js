@@ -7,7 +7,7 @@ dependOn("betterSettings.js", () => {
 
     runAfterLoad(async () => {
     window.setTimeout(async () => {
-        if (!enabledMods.includes("mods/velocity.js") && standaloneType !== "steam" && enablestartupprompt.value === true){
+        if (!enabledMods.some(m => m.includes("velocity.js")) && standaloneType !== "steam" && enablestartupprompt.value === true){
             _jaydalert("velocity.js is recommended for weapons.js to function in its intended way.");
         }
     },)
