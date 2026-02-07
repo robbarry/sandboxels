@@ -68,6 +68,17 @@ runAfterLoad(function() {
         salt_water:       31,
         sugar_water:      31,
         dirty_water:      32,
+        pool_water:       33,
+        seltzer:          33,
+        blood:            30,    // close to water
+        milk:             31,
+        juice:            31,
+        soda:             33,
+        vinegar:          33,
+        honey:            19,
+        sap:              16,
+        alcohol:          19,
+        mercury:          1,     // liquid metal
 
         // Metals — fastest conductors, ≈ 1
         tungsten:         1,
@@ -87,23 +98,97 @@ runAfterLoad(function() {
         aluminum:         7,
         zinc:             3,
         titanium:         4,
+        gallium:          3,
+        magnesium:        8,
+        sodium:           10,
+        potassium:        6,
+        metal_scrap:      4,     // generic scrap iron
+        rust:             5,
+        slag:             6,
 
-        // Stone & minerals
+        // Stone, minerals & construction
         rock:             7,
+        rock_wall:        7,
         gravel:           6,
         sand:             7,
+        packed_sand:      7,
+        wet_sand:         12,    // sand + water mix
+        color_sand:       7,
         glass:            7,
+        stained_glass:    7,
+        glass_shard:      7,
         diamond:          4,
         limestone:        7,
         basalt:           7,
         calcium:          5,
+        concrete:         7,
+        brick:            7,
+        adobe:            7,
+        porcelain:        6,
+        baked_clay:       7,
+        tuff:             7,
+        mudstone:         7,
+        sulfur:           6,
+        borax:            8,
+        salt:             7,
 
-        // Organic
+        // Organic solids
         wood:             14,
+        bamboo:           11,
+        sawdust:          14,
+        paper:            11,
+        cloth:            11,
+        straw:            14,
         charcoal:         8,
         coal:             10,
         oil:              16,
+        lamp_oil:         16,
+        nut_oil:          16,
         wax:              20,
+        plastic:          12,
+        bone:             10,
+        ash:              6,
+        tinder:           11,
+        rubber:           16,    // if present
+
+        // Food (mostly high water content ≈ 25-30)
+        potato:           27,
+        tomato:           32,
+        lettuce:          33,
+        grape:            30,
+        corn:             27,
+        bread:            20,
+        toast:            14,    // dried out
+        dough:            22,
+        flour:            14,
+        rice:             10,
+        wheat:            13,
+        egg:              27,
+        cheese:           13,
+        butter:           17,
+        sugar:            10,
+        candy:            10,
+        chocolate:        11,
+        beans:            27,
+        pumpkin:          32,
+        pickle:           33,    // mostly water
+        nut:              13,
+        coffee_bean:      10,
+
+        // Liquids
+        liquid_hydrogen:  75,    // extreme, like gas form
+        liquid_nitrogen:  8,
+        caramel:          15,
+        glue:             14,
+        slime:            25,
+        ink:              30,
+        dye:              30,
+        mayo:             24,
+        ketchup:          30,
+        sauce:            28,
+        yogurt:           30,
+        molasses:         15,
+        cement:           7,
 
         // Gases
         oxygen:           7,
@@ -111,6 +196,12 @@ runAfterLoad(function() {
         nitrogen:         8,
         carbon_dioxide:   7,
         helium:           42,
+        neon:             8,
+        methane:          17,
+        propane:          13,
+        chlorine:         4,
+        smoke:            8,
+        smog:             8,
 
         // Radioactive (from chem.js) — metals, so fast
         actinium:         1,
@@ -130,10 +221,15 @@ runAfterLoad(function() {
         lava:             12,
         mud:              11,
         clay:             7,
+        clay_soil:        7,
         soil:             6,
         dirt:             6,
+        mulch:            12,
+        permafrost:       15,    // frozen soil + ice
         fire:             1,
         plasma:           1,
+        amber:            11,
+        dry_ice:          7,
     };
 
     for (var name in overrides) {
