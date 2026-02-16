@@ -1359,7 +1359,7 @@ worldgentypes.fungi_ecosystem = {
 		["fungi", 0.067, 10]
     ],
     baseHeight: 0.5,
-},
+};
 worldgentypes.insect_ecosystem = {
     layers: [
         [0.95, "grass"],
@@ -1379,10 +1379,10 @@ worldgentypes.insect_ecosystem = {
 		["fungi",0]
     ],
     baseHeight: 0.5,
-}
+};
 
 // Fix: all organic elements should respond to heat, fire, and cold
-(function() {
+;(function() {
     // Set missing properties without overwriting existing ones
     function patch(name, props) {
         if (!elements[name]) return;
