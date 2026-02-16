@@ -1381,60 +1381,73 @@ worldgentypes.insect_ecosystem = {
     baseHeight: 0.5,
 }
 
-// Fix: all organic elements should die from heat and fire
+// Fix: all organic elements should respond to heat, fire, and cold
 (function() {
-    // Arthropods: die at 100C like base game bugs
-    var arthropods = [
-        "male_green_bottle_fly", "crawl_male_green_bottle_fly", "crawl_female_green_bottle_fly",
+    // Set missing properties without overwriting existing ones
+    function patch(name, props) {
+        if (!elements[name]) return;
+        for (var key in props) {
+            if (elements[name][key] === undefined) {
+                elements[name][key] = props[key];
+            }
+        }
+    }
+
+    // All adult arthropods, crawling forms, injured forms, eggs, pupae, spawners
+    [
+        "female_green_bottle_fly", "male_green_bottle_fly",
+        "crawl_male_green_bottle_fly", "crawl_female_green_bottle_fly",
         "injured_male_green_bottle_fly", "injured_female_green_bottle_fly",
         "green_bottle_fly_egg", "green_bottle_fly_pupae",
-        "male_fruitfly", "crawl_fruitfly", "fruitfly_egg", "fruitfly_pupae",
+        "female_fruitfly", "male_fruitfly", "crawl_fruitfly",
+        "fruitfly_egg", "fruitfly_pupae",
         "worker_leafcutter_ant", "queen_leafcutter_ant",
         "leafcutter_ant_egg", "leafcutter_ant_pupae",
+        "female_ladybird_beetle", "male_ladybird_beetle",
+        "crawl_male_ladybird_beetle", "crawl_female_ladybird_beetle",
+        "male_springtail", "female_springtail",
         "springtail_egg", "springtail_pupae",
         "bold_jumping_spider_eggsac", "bold_jumping_spiderling",
         "streamlining_bold_jumping_spider",
         "male_bold_jumping_spider", "female_bold_jumping_spider",
         "mold", "bug", "fungi"
-    ];
-    arthropods.forEach(function(name) {
-        if (!elements[name]) return;
-        if (elements[name].tempHigh === undefined) {
-            elements[name].tempHigh = 100;
-            elements[name].stateHigh = "dead_arthropod";
-        }
-        if (elements[name].burn === undefined) {
-            elements[name].burn = 95;
-            elements[name].burnTime = 25;
-            elements[name].burnInto = ["dead_arthropod", "ash"];
-        }
+    ].forEach(function(name) {
+        patch(name, {
+            tempHigh: 100, stateHigh: "dead_arthropod",
+            tempLow: 0, stateLow: "dead_arthropod",
+            burn: 95, burnTime: 25, burnInto: ["dead_arthropod", "ash"]
+        });
     });
 
-    // dead_arthropod turns to ash at higher heat
-    if (elements.dead_arthropod && elements.dead_arthropod.tempHigh === undefined) {
-        elements.dead_arthropod.tempHigh = 200;
-        elements.dead_arthropod.stateHigh = "ash";
-        elements.dead_arthropod.burn = 90;
-        elements.dead_arthropod.burnTime = 20;
-        elements.dead_arthropod.burnInto = "ash";
-    }
+    // Larvae: keep tempHigh (maturation trigger), add cold and fire
+    [
+        "green_bottle_fly_larva", "fruitfly_larva",
+        "leafcutter_ant_larva", "springtail_larva"
+    ].forEach(function(name) {
+        patch(name, {
+            tempLow: 0, stateLow: "dead_arthropod",
+            burn: 90, burnTime: 20, burnInto: "dead_arthropod"
+        });
+    });
 
-    // Protein, molt, leaf litter: organic debris that should burn
+    // Dead arthropod: burns to ash at higher heat
+    patch("dead_arthropod", {
+        tempHigh: 200, stateHigh: "ash",
+        tempLow: -50, stateLow: "ice",
+        burn: 90, burnTime: 20, burnInto: "ash"
+    });
+
+    // Organic debris
     ["protein", "molt", "leaf_litter"].forEach(function(name) {
-        if (!elements[name]) return;
-        if (elements[name].tempHigh === undefined) {
-            elements[name].tempHigh = 200;
-            elements[name].stateHigh = "ash";
-        }
-        if (elements[name].burn === undefined) {
-            elements[name].burn = 80;
-            elements[name].burnTime = 30;
-            elements[name].burnInto = "ash";
-        }
+        patch(name, {
+            tempHigh: 200, stateHigh: "ash",
+            tempLow: -20, stateLow: "ice",
+            burn: 80, burnTime: 30, burnInto: "ash"
+        });
     });
 
-    // Mushroom parts: burn at 225C like base game mushrooms
-    var mushroomParts = [
+    // Mushroom parts
+    [
         "conecap_mushroom_spore", "conecap_mushroom_stalk",
         "conecap_mushroom_gill", "conecap_mushroom_cap",
         "green_spored_parasol_spore", "green_spored_parasol_stalk",
@@ -1448,70 +1461,51 @@ worldgentypes.insect_ecosystem = {
         "amanita_parcivolvata_gill", "amanita_parcivolvata_cap",
         "giant_puffball_mushroom_spore", "giant_puffball_mushroom_gill",
         "giant_puffball_mushroom_ring", "giant_puffball_mushroom_cap"
-    ];
-    mushroomParts.forEach(function(name) {
-        if (!elements[name]) return;
-        if (elements[name].tempHigh === undefined) {
-            elements[name].tempHigh = 225;
-            elements[name].stateHigh = "fire";
-        }
-        if (elements[name].burn === undefined) {
-            elements[name].burn = 10;
-            elements[name].burnTime = 65;
-            elements[name].burnInto = "ash";
-        }
+    ].forEach(function(name) {
+        patch(name, {
+            tempHigh: 225, stateHigh: "fire",
+            tempLow: -5, stateLow: "ice",
+            burn: 10, burnTime: 65, burnInto: "ash"
+        });
     });
 
-    // Plant parts: wood anemone burns like base game plants (100C)
-    var plantParts = [
+    // Plant parts
+    [
         "wood_anemone_seed", "wood_anemone_stem", "wood_anemone_sepal",
         "wood_anemone_pistil", "wood_anemone_petal",
         "banana_pseudostem", "banana_pseudostem_2", "banana_plant_top",
         "banana_leaf", "banana_peduncle_1", "banana_peduncle_2"
-    ];
-    plantParts.forEach(function(name) {
-        if (!elements[name]) return;
-        if (elements[name].tempHigh === undefined) {
-            elements[name].tempHigh = 100;
-            elements[name].stateHigh = "dead_plant";
-        }
-        if (elements[name].burn === undefined) {
-            elements[name].burn = 85;
-            elements[name].burnTime = 60;
-            elements[name].burnInto = "dead_plant";
-        }
+    ].forEach(function(name) {
+        patch(name, {
+            tempHigh: 100, stateHigh: "dead_plant",
+            tempLow: -5, stateLow: "dead_plant",
+            burn: 85, burnTime: 60, burnInto: "dead_plant"
+        });
     });
 
-    // Food items: bananas cook/burn
-    var foods = [
+    // Food items
+    [
         "banana", "mashed_banana", "rotten_banana", "banana_seed",
         "fertilized_banana_seed", "infested_meat"
-    ];
-    foods.forEach(function(name) {
-        if (!elements[name]) return;
-        if (elements[name].tempHigh === undefined) {
-            elements[name].tempHigh = 200;
-            elements[name].stateHigh = "ash";
-        }
-        if (elements[name].burn === undefined) {
-            elements[name].burn = 15;
-            elements[name].burnTime = 50;
-            elements[name].burnInto = "ash";
-        }
+    ].forEach(function(name) {
+        patch(name, {
+            tempHigh: 200, stateHigh: "ash",
+            tempLow: -10, stateLow: "ice",
+            burn: 15, burnTime: 50, burnInto: "ash"
+        });
     });
 
-    // Garbage: already has burn but needs tempHigh
+    // Garbage
     ["garbage_bag", "garbage"].forEach(function(name) {
-        if (!elements[name]) return;
-        if (elements[name].tempHigh === undefined) {
-            elements[name].tempHigh = 300;
-            elements[name].stateHigh = "ash";
-        }
+        patch(name, {
+            tempHigh: 300, stateHigh: "ash",
+            tempLow: -30, stateLow: "ice"
+        });
     });
 
-    // Garbage juice: liquid that should evaporate
-    if (elements.garbage_juice && elements.garbage_juice.tempHigh === undefined) {
-        elements.garbage_juice.tempHigh = 105;
-        elements.garbage_juice.stateHigh = ["steam", "stench"];
-    }
+    // Garbage juice
+    patch("garbage_juice", {
+        tempHigh: 105, stateHigh: ["steam", "stench"],
+        tempLow: -5, stateLow: "ice"
+    });
 })();
