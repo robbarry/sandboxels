@@ -1381,4 +1381,46 @@ worldgentypes.insect_ecosystem = {
     baseHeight: 0.5,
 }
 
-
+// Fix: all arthropods should die from heat and fire
+(function() {
+    var arthropods = [
+        // green bottle flies
+        "male_green_bottle_fly", "crawl_male_green_bottle_fly", "crawl_female_green_bottle_fly",
+        "injured_male_green_bottle_fly", "injured_female_green_bottle_fly",
+        "green_bottle_fly_egg", "green_bottle_fly_pupae",
+        // fruit flies
+        "male_fruitfly", "crawl_fruitfly",
+        "fruitfly_egg", "fruitfly_pupae",
+        // leafcutter ants
+        "worker_leafcutter_ant", "queen_leafcutter_ant",
+        "leafcutter_ant_egg", "leafcutter_ant_pupae",
+        // springtails
+        "springtail_egg", "springtail_pupae",
+        // bold jumping spiders
+        "bold_jumping_spider_eggsac", "bold_jumping_spiderling",
+        "streamlining_bold_jumping_spider",
+        "male_bold_jumping_spider", "female_bold_jumping_spider",
+        // other
+        "mold"
+    ];
+    arthropods.forEach(function(name) {
+        if (!elements[name]) return;
+        if (elements[name].tempHigh === undefined) {
+            elements[name].tempHigh = 100;
+            elements[name].stateHigh = "dead_arthropod";
+        }
+        if (elements[name].burn === undefined) {
+            elements[name].burn = 95;
+            elements[name].burnTime = 25;
+            elements[name].burnInto = ["dead_arthropod", "ash"];
+        }
+    });
+    // dead_arthropod should turn to ash at high heat
+    if (elements.dead_arthropod && elements.dead_arthropod.tempHigh === undefined) {
+        elements.dead_arthropod.tempHigh = 200;
+        elements.dead_arthropod.stateHigh = "ash";
+        elements.dead_arthropod.burn = 90;
+        elements.dead_arthropod.burnTime = 20;
+        elements.dead_arthropod.burnInto = "ash";
+    }
+})();
