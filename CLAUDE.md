@@ -191,3 +191,14 @@ Biosphere tools mod with:
 - **fan_up/down/left/right**: Wind with inverse-square falloff. Adds velocity (requires `velocity.js`). Shift-click to set force.
 
 Enable with `velocity.js` for physics-based fan behavior.
+
+### `mods/pressure_mvp.js`
+
+Pressure gameplay MVP with:
+
+- **Physics model**: Persistent pressure field with diffusion, hydrostatic liquid depth pressure, and compressibility/viscosity-aware momentum updates.
+- **pressure_pump**: Directional compressor with discharge and suction sides (shift-select sets direction, power, range).
+- **pressure_vent**: Lower-force airflow tool for steering and boundary-layer behavior.
+- **pressure_valve**: Directional valve with aperture and max-throughput limits; electricity pulses it open.
+- **barometer**: Reads local pressure (and dynamic local flow speed) with color-coded intensity.
+- **Pressure view (9)**: Visualizes pressure field with red for high pressure and cyan for low pressure.
