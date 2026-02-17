@@ -1,4 +1,4 @@
-// Pressure MVP (realism pass)
+// Pressure MVP (realism pass) - Optimized
 // - Persistent pressure field with diffusion
 // - Hydrostatic depth pressure for liquids
 // - Compressibility + viscosity-aware momentum
@@ -35,14 +35,17 @@
         }
     };
 
+    // Optimization: Reused variables for choosePressureRedirect to avoid GC
+    var _bestX = 0, _bestY = 0, _bestScore = -999999;
+    var _baseScore = -999999;
+    var _visitedMask = new Int8Array(9); // 3x3 local grid mask
+
     function clamp(value, min, max) {
-        return Math.max(min, Math.min(max, value));
+        return value < min ? min : (value > max ? max : value);
     }
 
     function sign(n) {
-        if (n > 0) return 1;
-        if (n < 0) return -1;
-        return 0;
+        return n > 0 ? 1 : (n < 0 ? -1 : 0);
     }
 
     function indexOfCoord(x, y) {
@@ -50,7 +53,7 @@
     }
 
     function ensureField() {
-        if (width === undefined || height === undefined) return false;
+        if (typeof width === 'undefined' || typeof height === 'undefined') return false;
 
         var targetStride = width + 1;
         var targetHeight = height + 1;
@@ -80,29 +83,31 @@
 
     function markBounds(x, y) {
         if (!pressureMvp.field) return;
-        x = clamp(x, 0, pressureMvp.stride - 1);
-        y = clamp(y, 0, pressureMvp.height - 1);
+        // Inlining clamp for speed
+        var sx = x < 0 ? 0 : (x >= pressureMvp.stride ? pressureMvp.stride - 1 : x);
+        var sy = y < 0 ? 0 : (y >= pressureMvp.height ? pressureMvp.height - 1 : y);
 
-        if (x < pressureMvp.minX) pressureMvp.minX = x;
-        if (y < pressureMvp.minY) pressureMvp.minY = y;
-        if (x > pressureMvp.maxX) pressureMvp.maxX = x;
-        if (y > pressureMvp.maxY) pressureMvp.maxY = y;
+        if (sx < pressureMvp.minX) pressureMvp.minX = sx;
+        if (sy < pressureMvp.minY) pressureMvp.minY = sy;
+        if (sx > pressureMvp.maxX) pressureMvp.maxX = sx;
+        if (sy > pressureMvp.maxY) pressureMvp.maxY = sy;
     }
 
     function addPressureAt(x, y, value) {
         if (!pressureMvp.field) return;
         if (x < 0 || y < 0 || x >= pressureMvp.stride || y >= pressureMvp.height) return;
-        pressureMvp.field[indexOfCoord(x, y)] += value;
+        pressureMvp.field[y * pressureMvp.stride + x] += value;
         markBounds(x, y);
     }
 
     function getPressureAt(x, y) {
         if (!pressureMvp.field) return 0;
         if (x < 0 || y < 0 || x >= pressureMvp.stride || y >= pressureMvp.height) return 0;
-        return pressureMvp.field[indexOfCoord(x, y)];
+        return pressureMvp.field[y * pressureMvp.stride + x];
     }
 
     function isFlowInfo(info) {
+        // Fast check for liquid/gas
         return !!(info && info.movable === true && (info.state === "liquid" || info.state === "gas"));
     }
 
@@ -113,7 +118,6 @@
     }
 
     function hasExternalVelocityMod() {
-        // gravity2.js and similar velocity mods generally expose one or more of these globals.
         return (
             typeof doVelocity === "function" ||
             typeof gravityPull !== "undefined" ||
@@ -135,36 +139,40 @@
     }
 
     function getGasBuoyancyFactor(info) {
-        // > 0 rises, < 0 sinks (e.g., CO2 should usually sink in still air).
         var rho = getElementDensity(info);
         var rhoAir = getReferenceAirDensity();
-        return clamp((rhoAir - rho) / rhoAir, -1.8, 1.8);
+        // Inline clamp
+        var val = (rhoAir - rho) / rhoAir;
+        return val < -1.8 ? -1.8 : (val > 1.8 ? 1.8 : val);
     }
 
     function getDensityScale(info) {
         var density = getElementDensity(info);
         if (info.state === "gas") {
-            return clamp(density / 1.6, 0.14, 3.2);
+            var val = density / 1.6;
+            return val < 0.14 ? 0.14 : (val > 3.2 ? 3.2 : val);
         }
-        return clamp(density / 1000, 0.35, 4);
+        var val = density / 1000;
+        return val < 0.35 ? 0.35 : (val > 4 ? 4 : val);
     }
 
     function getViscosityDrag(info) {
         var base = info.state === "gas" ? 0.9 : 0.62;
         if (info.viscosity === undefined) return base;
 
-        // 0..1 where 1 = almost no drag, 0 = very viscous.
         var visc = Math.log(info.viscosity + 1) / 10;
         var drag = base - visc * (info.state === "gas" ? 0.28 : 0.15);
-        return clamp(drag, info.state === "gas" ? 0.35 : 0.32, 0.95);
+        var min = info.state === "gas" ? 0.35 : 0.32;
+        return drag < min ? min : (drag > 0.95 ? 0.95 : drag);
     }
 
     function getCompressibility(info, densityScale) {
-        // Higher value = easier to compress and accelerate from pressure gradients.
         if (info.state === "gas") {
-            return clamp(1.9 - densityScale * 0.25, 0.85, 2.2);
+            var val = 1.9 - densityScale * 0.25;
+            return val < 0.85 ? 0.85 : (val > 2.2 ? 2.2 : val);
         }
-        return clamp(0.08 + 0.05 / densityScale, 0.06, 0.18);
+        var val = 0.08 + 0.05 / densityScale;
+        return val < 0.06 ? 0.06 : (val > 0.18 ? 0.18 : val);
     }
 
     function isFluidCell(x, y) {
@@ -192,7 +200,7 @@
     }
 
     function pressureColor(value) {
-        var p = clamp(value, -4, 6);
+        var p = value < -4 ? -4 : (value > 6 ? 6 : value);
         var r = 24;
         var g = 35;
         var b = 55;
@@ -209,10 +217,9 @@
             b += Math.round(190 * cold);
         }
 
-        r = clamp(r, 0, 255);
-        g = clamp(g, 0, 255);
-        b = clamp(b, 0, 255);
-        return "rgb(" + r + "," + g + "," + b + ")";
+        return "rgb(" + (r < 0 ? 0 : (r > 255 ? 255 : r)) + "," + 
+                        (g < 0 ? 0 : (g > 255 ? 255 : g)) + "," + 
+                        (b < 0 ? 0 : (b > 255 ? 255 : b)) + ")";
     }
 
     function applyDirectionalSource(x, y, dx, dy, power, range, spread) {
@@ -257,6 +264,7 @@
     }
 
     function applyHydrostaticPressure(minX, minY, maxX, maxY) {
+        // Optimization: Access pixelMap directly and minimize redundant checks
         for (var x = minX; x <= maxX; x++) {
             var columnHead = 0;
 
@@ -273,16 +281,21 @@
                 }
 
                 var info = elements[pixel.element];
-                if (!isFlowInfo(info) || info.state !== "liquid") {
+                if (!info || info.state !== "liquid" || !info.movable) {
                     columnHead = 0;
                     continue;
                 }
 
                 var densityScale = getDensityScale(info);
                 columnHead += 0.028 * densityScale;
-                addPressureAt(x, y, columnHead);
+                
+                // Direct array access for speed
+                var idx = y * pressureMvp.stride + x;
+                pressureMvp.field[idx] += columnHead;
             }
         }
+        markBounds(minX, minY);
+        markBounds(maxX, maxY);
     }
 
     function diffusePressureField(minX, minY, maxX, maxY) {
@@ -293,53 +306,64 @@
         var stride = pressureMvp.stride;
         var field = pressureMvp.field;
         var scratch = pressureMvp.scratch;
-
+        
+        // Pre-calculate indices to avoid repeated multiplies
         for (var pass = 0; pass < passes; pass++) {
             for (var y = minY; y <= maxY; y++) {
                 var row = y * stride;
                 for (var x = minX; x <= maxX; x++) {
                     var idx = row + x;
-                    var center = field[idx];
+                    
+                    // Optimization: Check flow eligibility without function call overhead if possible
+                    // But isFluidCell handles bounds and empty checks safely.
                     if (!isFluidCell(x, y)) {
-                        scratch[idx] = center * 0.9;
+                        scratch[idx] = field[idx] * 0.9;
                         continue;
                     }
-
+                    
+                    var center = field[idx];
                     var sum = 0;
                     var count = 0;
-                    if (isFluidCell(x - 1, y)) {
+
+                    // Unrolled neighbor checks
+                    // Left
+                    if (x > 0 && isFluidCell(x - 1, y)) {
                         sum += field[idx - 1];
                         count++;
                     }
-                    if (isFluidCell(x + 1, y)) {
+                    // Right
+                    if (x < stride - 1 && isFluidCell(x + 1, y)) {
                         sum += field[idx + 1];
                         count++;
                     }
-                    if (isFluidCell(x, y - 1)) {
+                    // Up
+                    if (y > 0 && isFluidCell(x, y - 1)) {
                         sum += field[idx - stride];
                         count++;
                     }
-                    if (isFluidCell(x, y + 1)) {
+                    // Down
+                    if (y < pressureMvp.height - 1 && isFluidCell(x, y + 1)) {
                         sum += field[idx + stride];
                         count++;
                     }
 
                     if (count === 0) {
                         scratch[idx] = center;
-                        continue;
+                    } else {
+                        var avg = sum / count;
+                        scratch[idx] = center + (avg - center) * d;
                     }
-
-                    var avg = sum / count;
-                    scratch[idx] = center + (avg - center) * d;
                 }
             }
 
+            // Swap buffers or copy back. Copy back is safer for maintaining 'field' as primary.
+            // Using a block copy would be faster but Float32Array doesn't support 2D sub-rect copies easily.
             for (var yy = minY; yy <= maxY; yy++) {
-                var rowCopy = yy * stride;
-                for (var xx = minX; xx <= maxX; xx++) {
-                    var copyIdx = rowCopy + xx;
-                    field[copyIdx] = scratch[copyIdx];
-                }
+                var rowOffset = yy * stride;
+                var start = rowOffset + minX;
+                var end = rowOffset + maxX + 1;
+                // TypedArray.prototype.set is faster than a loop
+                field.set(scratch.subarray(start, end), start);
             }
         }
     }
@@ -371,6 +395,12 @@
             var compressibility = getCompressibility(info, densityScale);
             var drag = getViscosityDrag(info);
             var pCenter = getPressureAt(x, y);
+            
+            // Optimization: Inline isFluidCell logic for neighbors or trust getPressureAt returns 0?
+            // getPressureAt returns 0 if OOB, but doesn't check for fluid.
+            // If neighbor is solid, pressure is technically 0 at that wall for gradient calculation?
+            // Or should we use pCenter (Neumann boundary)? Using pCenter is safer for stability.
+            
             var pRight = isFluidCell(x + 1, y) ? getPressureAt(x + 1, y) : pCenter;
             var pLeft = isFluidCell(x - 1, y) ? getPressureAt(x - 1, y) : pCenter;
             var pDown = isFluidCell(x, y + 1) ? getPressureAt(x, y + 1) : pCenter;
@@ -382,6 +412,7 @@
             var vx = (pixel.flowVx || 0) * drag;
             var vy = (pixel.flowVy || 0) * drag;
 
+            // F = -grad(P)
             var accelX = -gradX * physics.gradientScale * compressibility / Math.max(0.2, densityScale);
             var accelY = -gradY * physics.gradientScale * compressibility / Math.max(0.2, densityScale);
 
@@ -394,7 +425,6 @@
             }
 
             if (pressureMvp.compat.externalVelocity) {
-                // Let external velocity/gravity mods own kinetic transport.
                 pixel.flowVx = (pixel.flowVx || 0) * 0.55;
                 pixel.flowVy = (pixel.flowVy || 0) * 0.55;
                 if (Math.abs(pixel.flowVx) < 0.02) pixel.flowVx = 0;
@@ -406,20 +436,15 @@
             vx += accelX;
             vy += accelY;
 
+            // No-slip boundary approximation
             if (info.state === "liquid") {
-                // No-slip boundary approximation: liquids damp hard near solid walls.
                 var wallContacts = 0;
-                for (var w = 0; w < adjacentCoords.length; w++) {
-                    var wx = x + adjacentCoords[w][0];
-                    var wy = y + adjacentCoords[w][1];
-                    if (outOfBounds(wx, wy)) {
-                        wallContacts++;
-                        continue;
-                    }
-                    if (isEmpty(wx, wy, true)) continue;
-                    var near = pixelMap[wx][wy];
-                    if (!near || !isFlowPixel(near)) wallContacts++;
-                }
+                // Unroll adjacentCoords for speed
+                if (!isEmpty(x+0, y-1, true) && !isFlowPixel(pixelMap[x+0][y-1])) wallContacts++;
+                if (!isEmpty(x+0, y+1, true) && !isFlowPixel(pixelMap[x+0][y+1])) wallContacts++;
+                if (!isEmpty(x-1, y+0, true) && !isFlowPixel(pixelMap[x-1][y+0])) wallContacts++;
+                if (!isEmpty(x+1, y+0, true) && !isFlowPixel(pixelMap[x+1][y+0])) wallContacts++;
+                
                 var wallDrag = 1 - Math.min(0.42, wallContacts * 0.08);
                 vx *= wallDrag;
                 vy *= wallDrag;
@@ -433,8 +458,8 @@
             }
 
             var cap = info.state === "gas" ? 2.9 : 1.1;
-            pixel.flowVx = clamp(vx, -cap, cap);
-            pixel.flowVy = clamp(vy, -cap * 1.15, cap * 1.15);
+            pixel.flowVx = vx < -cap ? -cap : (vx > cap ? cap : vx);
+            pixel.flowVy = vy < -cap * 1.15 ? -cap * 1.15 : (vy > cap * 1.15 ? cap * 1.15 : vy);
 
             if (Math.abs(pixel.flowVx) < 0.015) pixel.flowVx = 0;
             if (Math.abs(pixel.flowVy) < 0.015) pixel.flowVy = 0;
@@ -449,7 +474,8 @@
 
         var field = pressureMvp.field;
         var retention = pressureMvp.physics.retention;
-
+        
+        // Fast decay
         for (var i = 0; i < field.length; i++) {
             field[i] *= retention;
         }
@@ -468,11 +494,12 @@
             if (isFlowInfo(info)) {
                 var densityScale = getDensityScale(info);
                 var crowd = 0;
-                for (var n = 0; n < adjacentCoords.length; n++) {
-                    var nx = pixel.x + adjacentCoords[n][0];
-                    var ny = pixel.y + adjacentCoords[n][1];
-                    if (!isEmpty(nx, ny, true)) crowd++;
-                }
+                
+                // Inline neighbor check
+                if (!isEmpty(pixel.x, pixel.y-1, true)) crowd++;
+                if (!isEmpty(pixel.x, pixel.y+1, true)) crowd++;
+                if (!isEmpty(pixel.x-1, pixel.y, true)) crowd++;
+                if (!isEmpty(pixel.x+1, pixel.y, true)) crowd++;
 
                 var staticPressure;
                 if (info.state === "liquid") {
@@ -498,9 +525,7 @@
                 var pumpY = pixel.dirY || 0;
                 var pumpBoost = pixel.charge ? 1.4 : 1;
 
-                // Discharge direction
                 applyDirectionalSource(pixel.x, pixel.y, pumpX, pumpY, pumpPower * pumpBoost, pumpRange, 0.42);
-                // Suction side
                 applyDirectionalSource(
                     pixel.x,
                     pixel.y,
@@ -541,6 +566,92 @@
         updateFlowMomentum();
     }
 
+    // Optimization: Allocation-free candidate checking
+    function checkCandidate(pixel, cx, cy, info, sourcePressure, externalVelocity, speed, vx, vy) {
+        if (outOfBounds(cx, cy)) return;
+        
+        // Local mask check
+        // relative coords: dx = cx - pixel.x, dy = cy - pixel.y
+        // dx in [-1, 1], dy in [-1, 1]
+        // map to index 0..8: (dx+1) + (dy+1)*3
+        var dx = cx - pixel.x;
+        var dy = cy - pixel.y;
+        
+        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) return;
+        
+        var maskIdx = (dx + 1) + (dy + 1) * 3;
+        if (_visitedMask[maskIdx]) return;
+        _visitedMask[maskIdx] = 1;
+
+        if (dx === 0 && dy === 0) return;
+
+        var candidatePressure = getPressureAt(cx, cy);
+        var pressureScale = externalVelocity ? (info.state === "liquid" ? 0.45 : 0.25) : 1;
+        var score = (sourcePressure - candidatePressure) * 2.8 * pressureScale;
+        
+        var occupant = null;
+        if (!isEmpty(cx, cy, true)) {
+            occupant = pixelMap[cx][cy];
+        }
+
+        if (speed > 0.001) {
+            score += ((dx * vx + dy * vy) / (speed + 0.001)) * 1.25;
+        }
+
+        if (info.state === "gas") {
+            var gasLift = getGasBuoyancyFactor(info);
+            score += (-dy) * 0.28 * gasLift;
+
+            var thisDensity = getElementDensity(info);
+            if (occupant && isFlowPixel(occupant)) {
+                var occInfo = elements[occupant.element];
+                if (occInfo && occInfo.state === "gas") {
+                    var occDensity = getElementDensity(occInfo);
+                    var densityDelta = thisDensity - occDensity;
+
+                    if (dy < 0 && densityDelta > 0.08) {
+                        score -= 2.8 + densityDelta * 0.8;
+                        if (externalVelocity && sourcePressure - candidatePressure < 1.2) return;
+                    }
+                    if (dy > 0 && densityDelta < -0.08) {
+                        score -= 2.3 + Math.abs(densityDelta) * 0.7;
+                        if (externalVelocity && sourcePressure - candidatePressure < 1.2) return;
+                    }
+                    if (dy > 0 && densityDelta > 0.08) score += 1.35 + densityDelta * 0.4;
+                    if (dy < 0 && densityDelta < -0.08) score += 1.2 + Math.abs(densityDelta) * 0.35;
+                }
+            }
+        } else {
+            score += dy * 0.52;
+            if (dy < 0) {
+                score -= 2.6;
+                if (!(vy < -0.55 && sourcePressure - candidatePressure > 0.55)) return;
+            }
+            if (dy === 0 && isEmpty(pixel.x, pixel.y + 1, true)) score -= 1.35;
+            if (externalVelocity && dy === 0 && sourcePressure - candidatePressure < 0.35) return;
+        }
+
+        if (occupant) {
+            if (occupant.element === "pressure_valve") {
+                score += occupant.open ? -0.2 : -2.8;
+            } else if (!isFlowPixel(occupant)) {
+                score += -1.8;
+            } else {
+                score += -0.45;
+            }
+        }
+
+        if (info.viscosity && info.viscosity > 500 && dy === 0) {
+            score -= Math.min(0.7, Math.log(info.viscosity) / 12);
+        }
+
+        if (score > _bestScore) {
+            _bestScore = score;
+            _bestX = cx;
+            _bestY = cy;
+        }
+    }
+
     function choosePressureRedirect(pixel, nx, ny, info) {
         var sourcePressure = getPressureAt(pixel.x, pixel.y);
         var externalVelocity = pressureMvp.compat.externalVelocity;
@@ -553,151 +664,52 @@
         var moveDx = sign(nx - pixel.x);
         var moveDy = sign(ny - pixel.y);
 
-        var candidates = [
-            [nx, ny],
-            [pixel.x + stepX, pixel.y + stepY],
-            [pixel.x + stepX, pixel.y],
-            [pixel.x, pixel.y + stepY],
-            [pixel.x - moveDy, pixel.y + moveDx],
-            [pixel.x + moveDy, pixel.y - moveDx]
-        ];
+        _bestX = nx;
+        _bestY = ny;
+        _bestScore = -999999;
+        
+        // Reset mask
+        for(var i=0; i<9; i++) _visitedMask[i] = 0;
 
+        // 1. Check original target first to set base score
+        // We simulate "checking" it to populate baseScore
+        checkCandidate(pixel, nx, ny, info, sourcePressure, externalVelocity, speed, vx, vy);
+        _baseScore = _bestScore; 
+        
+        // 2. Check diagonals and momentum-biased directions
+        checkCandidate(pixel, pixel.x + stepX, pixel.y + stepY, info, sourcePressure, externalVelocity, speed, vx, vy);
+        checkCandidate(pixel, pixel.x + stepX, pixel.y, info, sourcePressure, externalVelocity, speed, vx, vy);
+        checkCandidate(pixel, pixel.x, pixel.y + stepY, info, sourcePressure, externalVelocity, speed, vx, vy);
+        checkCandidate(pixel, pixel.x - moveDy, pixel.y + moveDx, info, sourcePressure, externalVelocity, speed, vx, vy);
+        checkCandidate(pixel, pixel.x + moveDy, pixel.y - moveDx, info, sourcePressure, externalVelocity, speed, vx, vy);
+
+        // 3. Check verticals based on state (buoyancy/gravity)
         if (info.state === "gas") {
-            candidates.push([pixel.x, pixel.y - 1]);
-            candidates.push([pixel.x - 1, pixel.y - 1]);
-            candidates.push([pixel.x + 1, pixel.y - 1]);
+            checkCandidate(pixel, pixel.x, pixel.y - 1, info, sourcePressure, externalVelocity, speed, vx, vy);
+            checkCandidate(pixel, pixel.x - 1, pixel.y - 1, info, sourcePressure, externalVelocity, speed, vx, vy);
+            checkCandidate(pixel, pixel.x + 1, pixel.y - 1, info, sourcePressure, externalVelocity, speed, vx, vy);
         } else {
-            candidates.push([pixel.x, pixel.y + 1]);
-            candidates.push([pixel.x - 1, pixel.y + 1]);
-            candidates.push([pixel.x + 1, pixel.y + 1]);
+            checkCandidate(pixel, pixel.x, pixel.y + 1, info, sourcePressure, externalVelocity, speed, vx, vy);
+            checkCandidate(pixel, pixel.x - 1, pixel.y + 1, info, sourcePressure, externalVelocity, speed, vx, vy);
+            checkCandidate(pixel, pixel.x + 1, pixel.y + 1, info, sourcePressure, externalVelocity, speed, vx, vy);
         }
 
-        var bestX = nx;
-        var bestY = ny;
-        var bestScore = -999999;
-        var baseScore = -999999;
-        var seen = {};
-
-        for (var i = 0; i < candidates.length; i++) {
-            var cx = candidates[i][0];
-            var cy = candidates[i][1];
-
-            if (cx === pixel.x && cy === pixel.y) continue;
-            if (Math.abs(cx - pixel.x) > 1 || Math.abs(cy - pixel.y) > 1) continue;
-            if (outOfBounds(cx, cy)) continue;
-
-            var key = cx + "," + cy;
-            if (seen[key]) continue;
-            seen[key] = true;
-
-            var dx = cx - pixel.x;
-            var dy = cy - pixel.y;
-            var candidatePressure = getPressureAt(cx, cy);
-            var pressureScale = externalVelocity ? (info.state === "liquid" ? 0.45 : 0.25) : 1;
-            var score = (sourcePressure - candidatePressure) * 2.8 * pressureScale;
-            var occupant = null;
-            if (!isEmpty(cx, cy, true)) {
-                occupant = pixelMap[cx][cy];
-            }
-
-            if (speed > 0.001) {
-                score += ((dx * vx + dy * vy) / (speed + 0.001)) * 1.25;
-            }
-
-            if (info.state === "gas") {
-                var gasLift = getGasBuoyancyFactor(info);
-                score += (-dy) * 0.28 * gasLift;
-
-                var thisDensity = getElementDensity(info);
-                if (occupant && isFlowPixel(occupant)) {
-                    var occInfo = elements[occupant.element];
-                    if (occInfo && occInfo.state === "gas") {
-                        var occDensity = getElementDensity(occInfo);
-                        var densityDelta = thisDensity - occDensity;
-
-                        // Strongly discourage unstable layering:
-                        // heavier gas moving up through lighter gas, or lighter gas sinking through heavier gas.
-                        if (dy < 0 && densityDelta > 0.08) {
-                            score -= 2.8 + densityDelta * 0.8;
-                            if (externalVelocity && sourcePressure - candidatePressure < 1.2) {
-                                continue;
-                            }
-                        }
-                        if (dy > 0 && densityDelta < -0.08) {
-                            score -= 2.3 + Math.abs(densityDelta) * 0.7;
-                            if (externalVelocity && sourcePressure - candidatePressure < 1.2) {
-                                continue;
-                            }
-                        }
-
-                        // Reward stable layering movement.
-                        if (dy > 0 && densityDelta > 0.08) {
-                            score += 1.35 + densityDelta * 0.4;
-                        }
-                        if (dy < 0 && densityDelta < -0.08) {
-                            score += 1.2 + Math.abs(densityDelta) * 0.35;
-                        }
-                    }
-                }
-            } else {
-                score += dy * 0.52;
-                if (dy < 0) {
-                    score -= 2.6;
-                    if (!(vy < -0.55 && sourcePressure - candidatePressure > 0.55)) {
-                        continue;
-                    }
-                }
-                if (dy === 0 && isEmpty(pixel.x, pixel.y + 1, true)) {
-                    // Liquids should fall first before spreading sideways.
-                    score -= 1.35;
-                }
-                if (externalVelocity && dy === 0 && sourcePressure - candidatePressure < 0.35) {
-                    continue;
-                }
-            }
-
-            if (occupant) {
-                if (occupant && occupant.element === "pressure_valve") {
-                    score += occupant.open ? -0.2 : -2.8;
-                } else if (occupant && !isFlowPixel(occupant)) {
-                    score += -1.8;
-                } else {
-                    score += -0.45;
-                }
-            }
-
-            if (info.viscosity && info.viscosity > 500 && dy === 0) {
-                score -= Math.min(0.7, Math.log(info.viscosity) / 12);
-            }
-
-            if (cx === nx && cy === ny) baseScore = score;
-            if (score > bestScore) {
-                bestScore = score;
-                bestX = cx;
-                bestY = cy;
-            }
-        }
-
-        var targetPressure = getPressureAt(bestX, bestY);
+        // Stability check for compression
+        var targetPressure = getPressureAt(_bestX, _bestY);
         var pressureRise = targetPressure - sourcePressure;
         if (pressureRise > 0) {
             var densityScale = getDensityScale(info);
             var resistance = info.state === "gas" ? (2.7 + getCompressibility(info, densityScale)) : (1.1 + densityScale * 0.8);
-            var compressionRatio = pressureRise / Math.max(0.1, resistance);
-            var compressLimit;
-            if (info.state === "gas") {
-                compressLimit = externalVelocity ? 1.2 : 0.9;
-            } else {
-                compressLimit = externalVelocity ? 0.12 : 0.22;
-            }
-            if (compressionRatio > compressLimit) {
+            var compressLimit = info.state === "gas" ? (externalVelocity ? 1.2 : 0.9) : (externalVelocity ? 0.12 : 0.22);
+            
+            if ((pressureRise / Math.max(0.1, resistance)) > compressLimit) {
                 return false;
             }
         }
 
-        if (bestX !== nx || bestY !== ny) {
-            if (bestScore > baseScore + 0.05) {
-                return [bestX, bestY];
+        if (_bestX !== nx || _bestY !== ny) {
+            if (_bestScore > _baseScore + 0.05) {
+                return [_bestX, _bestY];
             }
         }
 
@@ -740,8 +752,10 @@
             }
 
             if (!pressureMvp.compat.externalVelocity) {
-                target.flowVx = clamp((target.flowVx || 0) + dirX * impulse, -3, 3);
-                target.flowVy = clamp((target.flowVy || 0) + dirY * impulse, -3.2, 3.2);
+                var tvx = (target.flowVx || 0) + dirX * impulse;
+                var tvy = (target.flowVy || 0) + dirY * impulse;
+                target.flowVx = tvx < -3 ? -3 : (tvx > 3 ? 3 : tvx);
+                target.flowVy = tvy < -3.2 ? -3.2 : (tvy > 3.2 ? 3.2 : tvy);
             }
 
             addPressureAt(target.x, target.y, impulse * 0.45);
