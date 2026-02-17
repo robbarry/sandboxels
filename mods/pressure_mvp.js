@@ -127,6 +127,20 @@
         return info.state === "liquid" ? 1000 : 1;
     }
 
+    function getReferenceAirDensity() {
+        if (typeof airDensity === "number" && isFinite(airDensity) && airDensity > 0) {
+            return airDensity;
+        }
+        return 1.225;
+    }
+
+    function getGasBuoyancyFactor(info) {
+        // > 0 rises, < 0 sinks (e.g., CO2 should usually sink in still air).
+        var rho = getElementDensity(info);
+        var rhoAir = getReferenceAirDensity();
+        return clamp((rhoAir - rho) / rhoAir, -1.8, 1.8);
+    }
+
     function getDensityScale(info) {
         var density = getElementDensity(info);
         if (info.state === "gas") {
@@ -372,7 +386,7 @@
             var accelY = -gradY * physics.gradientScale * compressibility / Math.max(0.2, densityScale);
 
             if (info.state === "gas") {
-                accelY -= physics.gasBuoyancy * clamp(1.45 / densityScale, 0.7, 2.3);
+                accelY -= physics.gasBuoyancy * getGasBuoyancyFactor(info);
             } else {
                 accelY += physics.liquidGravity * densityScale;
                 accelX *= 0.34;
@@ -579,15 +593,52 @@
             var dx = cx - pixel.x;
             var dy = cy - pixel.y;
             var candidatePressure = getPressureAt(cx, cy);
-            var pressureScale = externalVelocity ? (info.state === "liquid" ? 0.45 : 0.65) : 1;
+            var pressureScale = externalVelocity ? (info.state === "liquid" ? 0.45 : 0.25) : 1;
             var score = (sourcePressure - candidatePressure) * 2.8 * pressureScale;
+            var occupant = null;
+            if (!isEmpty(cx, cy, true)) {
+                occupant = pixelMap[cx][cy];
+            }
 
             if (speed > 0.001) {
                 score += ((dx * vx + dy * vy) / (speed + 0.001)) * 1.25;
             }
 
             if (info.state === "gas") {
-                score += (-dy) * 0.28;
+                var gasLift = getGasBuoyancyFactor(info);
+                score += (-dy) * 0.28 * gasLift;
+
+                var thisDensity = getElementDensity(info);
+                if (occupant && isFlowPixel(occupant)) {
+                    var occInfo = elements[occupant.element];
+                    if (occInfo && occInfo.state === "gas") {
+                        var occDensity = getElementDensity(occInfo);
+                        var densityDelta = thisDensity - occDensity;
+
+                        // Strongly discourage unstable layering:
+                        // heavier gas moving up through lighter gas, or lighter gas sinking through heavier gas.
+                        if (dy < 0 && densityDelta > 0.08) {
+                            score -= 2.8 + densityDelta * 0.8;
+                            if (externalVelocity && sourcePressure - candidatePressure < 1.2) {
+                                continue;
+                            }
+                        }
+                        if (dy > 0 && densityDelta < -0.08) {
+                            score -= 2.3 + Math.abs(densityDelta) * 0.7;
+                            if (externalVelocity && sourcePressure - candidatePressure < 1.2) {
+                                continue;
+                            }
+                        }
+
+                        // Reward stable layering movement.
+                        if (dy > 0 && densityDelta > 0.08) {
+                            score += 1.35 + densityDelta * 0.4;
+                        }
+                        if (dy < 0 && densityDelta < -0.08) {
+                            score += 1.2 + Math.abs(densityDelta) * 0.35;
+                        }
+                    }
+                }
             } else {
                 score += dy * 0.52;
                 if (dy < 0) {
@@ -605,8 +656,7 @@
                 }
             }
 
-            if (!isEmpty(cx, cy, true)) {
-                var occupant = pixelMap[cx][cy];
+            if (occupant) {
                 if (occupant && occupant.element === "pressure_valve") {
                     score += occupant.open ? -0.2 : -2.8;
                 } else if (occupant && !isFlowPixel(occupant)) {
