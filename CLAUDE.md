@@ -197,6 +197,7 @@ Enable with `velocity.js` for physics-based fan behavior.
 Pressure gameplay MVP with:
 
 - **Physics model**: Persistent pressure field with diffusion, hydrostatic liquid depth pressure, and compressibility/viscosity-aware momentum updates.
+- **Velocity-mod compatibility**: Detects external velocity/gravity mods (like gravity2-style mods) and disables direct momentum injection to avoid runaway motion.
 - **pressure_pump**: Directional compressor with discharge and suction sides (shift-select sets direction, power, range).
 - **pressure_vent**: Lower-force airflow tool for steering and boundary-layer behavior.
 - **pressure_valve**: Directional valve with aperture and max-throughput limits; electricity pulses it open.

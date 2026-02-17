@@ -22,13 +22,16 @@
             vent: { dirX: 1, dirY: 0, power: 1.8, range: 9 },
             valve: { open: false, dirX: 1, dirY: 0, aperture: 1, maxFlow: 5 }
         },
+        compat: {
+            externalVelocity: false
+        },
         physics: {
-            retention: 0.72,
-            diffuse: 0.24,
-            diffusePasses: 2,
-            gradientScale: 0.11,
-            gasBuoyancy: 0.048,
-            liquidGravity: 0.012
+            retention: 0.8,
+            diffuse: 0.2,
+            diffusePasses: 3,
+            gradientScale: 0.08,
+            gasBuoyancy: 0.045,
+            liquidGravity: 0.009
         }
     };
 
@@ -109,6 +112,15 @@
         return isFlowInfo(info);
     }
 
+    function hasExternalVelocityMod() {
+        // gravity2.js and similar velocity mods generally expose one or more of these globals.
+        return (
+            typeof doVelocity === "function" ||
+            typeof gravityPull !== "undefined" ||
+            typeof velocityMod !== "undefined"
+        );
+    }
+
     function getElementDensity(info) {
         if (!info) return 1;
         if (info.density !== undefined) return info.density;
@@ -124,13 +136,13 @@
     }
 
     function getViscosityDrag(info) {
-        var base = info.state === "gas" ? 0.9 : 0.8;
+        var base = info.state === "gas" ? 0.9 : 0.62;
         if (info.viscosity === undefined) return base;
 
         // 0..1 where 1 = almost no drag, 0 = very viscous.
         var visc = Math.log(info.viscosity + 1) / 10;
-        var drag = base - visc * 0.28;
-        return clamp(drag, 0.35, 0.95);
+        var drag = base - visc * (info.state === "gas" ? 0.28 : 0.15);
+        return clamp(drag, info.state === "gas" ? 0.35 : 0.32, 0.95);
     }
 
     function getCompressibility(info, densityScale) {
@@ -138,7 +150,14 @@
         if (info.state === "gas") {
             return clamp(1.9 - densityScale * 0.25, 0.85, 2.2);
         }
-        return clamp(0.22 + 0.08 / densityScale, 0.12, 0.45);
+        return clamp(0.08 + 0.05 / densityScale, 0.06, 0.18);
+    }
+
+    function isFluidCell(x, y) {
+        if (outOfBounds(x, y)) return false;
+        if (isEmpty(x, y, true)) return false;
+        var p = pixelMap[x][y];
+        return !!(p && isFlowPixel(p));
     }
 
     function directionFromName(name) {
@@ -267,8 +286,36 @@
                 for (var x = minX; x <= maxX; x++) {
                     var idx = row + x;
                     var center = field[idx];
-                    var avg =
-                        (field[idx - 1] + field[idx + 1] + field[idx - stride] + field[idx + stride]) * 0.25;
+                    if (!isFluidCell(x, y)) {
+                        scratch[idx] = center * 0.9;
+                        continue;
+                    }
+
+                    var sum = 0;
+                    var count = 0;
+                    if (isFluidCell(x - 1, y)) {
+                        sum += field[idx - 1];
+                        count++;
+                    }
+                    if (isFluidCell(x + 1, y)) {
+                        sum += field[idx + 1];
+                        count++;
+                    }
+                    if (isFluidCell(x, y - 1)) {
+                        sum += field[idx - stride];
+                        count++;
+                    }
+                    if (isFluidCell(x, y + 1)) {
+                        sum += field[idx + stride];
+                        count++;
+                    }
+
+                    if (count === 0) {
+                        scratch[idx] = center;
+                        continue;
+                    }
+
+                    var avg = sum / count;
                     scratch[idx] = center + (avg - center) * d;
                 }
             }
@@ -309,9 +356,14 @@
             var densityScale = getDensityScale(info);
             var compressibility = getCompressibility(info, densityScale);
             var drag = getViscosityDrag(info);
+            var pCenter = getPressureAt(x, y);
+            var pRight = isFluidCell(x + 1, y) ? getPressureAt(x + 1, y) : pCenter;
+            var pLeft = isFluidCell(x - 1, y) ? getPressureAt(x - 1, y) : pCenter;
+            var pDown = isFluidCell(x, y + 1) ? getPressureAt(x, y + 1) : pCenter;
+            var pUp = isFluidCell(x, y - 1) ? getPressureAt(x, y - 1) : pCenter;
 
-            var gradX = getPressureAt(x + 1, y) - getPressureAt(x - 1, y);
-            var gradY = getPressureAt(x, y + 1) - getPressureAt(x, y - 1);
+            var gradX = pRight - pLeft;
+            var gradY = pDown - pUp;
 
             var vx = (pixel.flowVx || 0) * drag;
             var vy = (pixel.flowVy || 0) * drag;
@@ -323,19 +375,50 @@
                 accelY -= physics.gasBuoyancy * clamp(1.45 / densityScale, 0.7, 2.3);
             } else {
                 accelY += physics.liquidGravity * densityScale;
+                accelX *= 0.34;
+                accelY *= 0.72;
+            }
+
+            if (pressureMvp.compat.externalVelocity) {
+                // Let external velocity/gravity mods own kinetic transport.
+                pixel.flowVx = (pixel.flowVx || 0) * 0.55;
+                pixel.flowVy = (pixel.flowVy || 0) * 0.55;
+                if (Math.abs(pixel.flowVx) < 0.02) pixel.flowVx = 0;
+                if (Math.abs(pixel.flowVy) < 0.02) pixel.flowVy = 0;
+                pixel.pressure = getPressureAt(x, y);
+                continue;
             }
 
             vx += accelX;
             vy += accelY;
 
-            var speed = Math.sqrt(vx * vx + vy * vy);
-            var reynoldsLike = speed * densityScale / Math.max(0.15, 1 - drag + 0.05);
-            if (reynoldsLike > 2.8 && Math.random() < 0.35) {
-                vx += (Math.random() - 0.5) * 0.05;
-                vy += (Math.random() - 0.5) * 0.05;
+            if (info.state === "liquid") {
+                // No-slip boundary approximation: liquids damp hard near solid walls.
+                var wallContacts = 0;
+                for (var w = 0; w < adjacentCoords.length; w++) {
+                    var wx = x + adjacentCoords[w][0];
+                    var wy = y + adjacentCoords[w][1];
+                    if (outOfBounds(wx, wy)) {
+                        wallContacts++;
+                        continue;
+                    }
+                    if (isEmpty(wx, wy, true)) continue;
+                    var near = pixelMap[wx][wy];
+                    if (!near || !isFlowPixel(near)) wallContacts++;
+                }
+                var wallDrag = 1 - Math.min(0.42, wallContacts * 0.08);
+                vx *= wallDrag;
+                vy *= wallDrag;
+            } else {
+                var speed = Math.sqrt(vx * vx + vy * vy);
+                var reynoldsLike = speed * densityScale / Math.max(0.15, 1 - drag + 0.05);
+                if (reynoldsLike > 2.8 && Math.random() < 0.28) {
+                    vx += (Math.random() - 0.5) * 0.04;
+                    vy += (Math.random() - 0.5) * 0.04;
+                }
             }
 
-            var cap = info.state === "gas" ? 2.9 : 2.25;
+            var cap = info.state === "gas" ? 2.9 : 1.1;
             pixel.flowVx = clamp(vx, -cap, cap);
             pixel.flowVy = clamp(vy, -cap * 1.15, cap * 1.15);
 
@@ -379,7 +462,7 @@
 
                 var staticPressure;
                 if (info.state === "liquid") {
-                    staticPressure = 0.22 + 0.55 * densityScale + crowd * 0.08;
+                    staticPressure = 0.035 + 0.12 * densityScale + crowd * 0.006;
                 } else {
                     var t = pixel.temp || 20;
                     var tempFactor = 1 + clamp((t - 20) / 500, -0.35, 1.25);
@@ -388,7 +471,7 @@
 
                 var vx = pixel.flowVx || 0;
                 var vy = pixel.flowVy || 0;
-                var dynamicPressure = (vx * vx + vy * vy) * densityScale * (info.state === "gas" ? 0.09 : 0.14);
+                var dynamicPressure = (vx * vx + vy * vy) * densityScale * (info.state === "gas" ? 0.08 : 0.04);
 
                 addPressureAt(pixel.x, pixel.y, staticPressure + dynamicPressure);
                 continue;
@@ -446,6 +529,7 @@
 
     function choosePressureRedirect(pixel, nx, ny, info) {
         var sourcePressure = getPressureAt(pixel.x, pixel.y);
+        var externalVelocity = pressureMvp.compat.externalVelocity;
         var vx = pixel.flowVx || 0;
         var vy = pixel.flowVy || 0;
         var speed = Math.sqrt(vx * vx + vy * vy);
@@ -495,7 +579,8 @@
             var dx = cx - pixel.x;
             var dy = cy - pixel.y;
             var candidatePressure = getPressureAt(cx, cy);
-            var score = (sourcePressure - candidatePressure) * 2.8;
+            var pressureScale = externalVelocity ? (info.state === "liquid" ? 0.45 : 0.65) : 1;
+            var score = (sourcePressure - candidatePressure) * 2.8 * pressureScale;
 
             if (speed > 0.001) {
                 score += ((dx * vx + dy * vy) / (speed + 0.001)) * 1.25;
@@ -504,7 +589,20 @@
             if (info.state === "gas") {
                 score += (-dy) * 0.28;
             } else {
-                score += dy * 0.22;
+                score += dy * 0.52;
+                if (dy < 0) {
+                    score -= 2.6;
+                    if (!(vy < -0.55 && sourcePressure - candidatePressure > 0.55)) {
+                        continue;
+                    }
+                }
+                if (dy === 0 && isEmpty(pixel.x, pixel.y + 1, true)) {
+                    // Liquids should fall first before spreading sideways.
+                    score -= 1.35;
+                }
+                if (externalVelocity && dy === 0 && sourcePressure - candidatePressure < 0.35) {
+                    continue;
+                }
             }
 
             if (!isEmpty(cx, cy, true)) {
@@ -534,18 +632,16 @@
         var pressureRise = targetPressure - sourcePressure;
         if (pressureRise > 0) {
             var densityScale = getDensityScale(info);
-            var resistance;
+            var resistance = info.state === "gas" ? (2.7 + getCompressibility(info, densityScale)) : (1.1 + densityScale * 0.8);
+            var compressionRatio = pressureRise / Math.max(0.1, resistance);
+            var compressLimit;
             if (info.state === "gas") {
-                resistance = 2.7 + getCompressibility(info, densityScale);
+                compressLimit = externalVelocity ? 1.2 : 0.9;
             } else {
-                resistance = 0.9 + densityScale * 0.45;
+                compressLimit = externalVelocity ? 0.12 : 0.22;
             }
-            var compressionRatio = pressureRise / resistance;
-            if (compressionRatio > 0.2) {
-                var blockChance = clamp(compressionRatio * (info.state === "gas" ? 0.35 : 0.6), 0, 0.95);
-                if (Math.random() < blockChance) {
-                    return false;
-                }
+            if (compressionRatio > compressLimit) {
+                return false;
             }
         }
 
@@ -559,6 +655,7 @@
     }
 
     function nudgeMomentumTowardMove(pixel, toX, toY, info) {
+        if (pressureMvp.compat.externalVelocity) return;
         var dx = sign(toX - pixel.x);
         var dy = sign(toY - pixel.y);
         if (!dx && !dy) return;
@@ -586,11 +683,21 @@
             if (!isFlowPixel(target)) continue;
 
             var impulse = (power / (step + 1)) * 0.35;
-            target.flowVx = clamp((target.flowVx || 0) + dirX * impulse, -3, 3);
-            target.flowVy = clamp((target.flowVy || 0) + dirY * impulse, -3.2, 3.2);
+            if (elements[target.element].state === "liquid") {
+                impulse *= 0.28;
+            } else {
+                impulse *= 0.8;
+            }
 
-            var pushChance = Math.min(0.3, impulse * 0.13);
-            if (Math.random() < pushChance) {
+            if (!pressureMvp.compat.externalVelocity) {
+                target.flowVx = clamp((target.flowVx || 0) + dirX * impulse, -3, 3);
+                target.flowVy = clamp((target.flowVy || 0) + dirY * impulse, -3.2, 3.2);
+            }
+
+            addPressureAt(target.x, target.y, impulse * 0.45);
+
+            var pushChance = elements[target.element].state === "liquid" ? Math.min(0.08, impulse * 0.06) : Math.min(0.2, impulse * 0.1);
+            if (!pressureMvp.compat.externalVelocity && Math.random() < pushChance) {
                 tryMove(target, target.x + dirX, target.y + dirY);
             }
         }
@@ -865,6 +972,8 @@
     };
 
     runAfterLoad(function() {
+        pressureMvp.compat.externalVelocity = hasExternalVelocityMod();
+
         validateMoves(function(pixel, nx, ny) {
             if (!pressureMvp.enabled || !pixel || pixel.del) return;
             if (!ensureField()) return;
@@ -910,6 +1019,9 @@
         });
 
         runEveryTick(function() {
+            if (!pressureMvp.compat.externalVelocity && hasExternalVelocityMod()) {
+                pressureMvp.compat.externalVelocity = true;
+            }
             rebuildPressureField();
         });
 
