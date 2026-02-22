@@ -313,7 +313,8 @@ function coolIonizedPlasma(pixel) {
     }
 
     const overTemp = pixel.temp - elements.plasma.tempLow;
-    const radiativeLoss = Math.min(3200, Math.max(10, 8 + overTemp * 0.002 + Math.sqrt(overTemp) * 2));
+    // Strong T-dependent cooling keeps ionized plumes transient at extreme temperatures.
+    const radiativeLoss = Math.min(120000, Math.max(120, 30 + overTemp * 0.06));
     pixel.temp -= radiativeLoss;
     pixelTempCheck(pixel);
 }

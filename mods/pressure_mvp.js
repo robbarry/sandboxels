@@ -150,7 +150,7 @@
         var lift = getGasBuoyancyFactor(info);
         // Matter-derived plasma should not behave like an endlessly rising hot-air balloon.
         if (pixel && pixel.element === "plasma" && pixel.hhrIonizedFrom !== undefined) {
-            lift *= 0.12;
+            lift = 0;
         }
         return lift;
     }
@@ -396,6 +396,16 @@
             if (x <= 0 || y <= 0 || x >= maxX || y >= maxY) {
                 pixel.flowVx = (pixel.flowVx || 0) * 0.6;
                 pixel.flowVy = (pixel.flowVy || 0) * 0.6;
+                pixel.pressure = getPressureAt(x, y);
+                continue;
+            }
+
+            if (pixel.element === "plasma" && pixel.hhrIonizedFrom !== undefined) {
+                // Let ionized plasma move thermally, not via pressure-vector steering.
+                pixel.flowVx = (pixel.flowVx || 0) * 0.35;
+                pixel.flowVy = (pixel.flowVy || 0) * 0.35;
+                if (Math.abs(pixel.flowVx) < 0.02) pixel.flowVx = 0;
+                if (Math.abs(pixel.flowVy) < 0.02) pixel.flowVy = 0;
                 pixel.pressure = getPressureAt(x, y);
                 continue;
             }
@@ -1082,6 +1092,10 @@
             }
 
             if (!isFlowInfo(info)) return;
+
+            if (pixel.element === "plasma" && pixel.hhrIonizedFrom !== undefined) {
+                return;
+            }
 
             var redirect = choosePressureRedirect(pixel, nx, ny, info);
             if (redirect === false) return false;
