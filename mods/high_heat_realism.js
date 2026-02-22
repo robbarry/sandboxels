@@ -185,8 +185,31 @@ function installPlasmaStabilityHook() {
     const defaultBehavior = elements.plasma.behavior;
     elements.plasma.behavior = function(pixel) {
         if (pixel.hhrIonizedFrom !== undefined) {
-            // Preserve mass for matter-derived plasma so it can cool back down.
-            behaviors.GAS(pixel);
+            // Preserve mass for matter-derived plasma so it can cool back down,
+            // but skip built-in air-density lift to avoid unbounded rise.
+            shuffleArray(adjacentCoordsShuffle);
+            let moved = false;
+            for (let i = 0; i < adjacentCoordsShuffle.length; i++) {
+                const coords = adjacentCoordsShuffle[i];
+                if (tryMove(pixel, pixel.x + coords[0], pixel.y + coords[1])) {
+                    moved = true;
+                    break;
+                }
+            }
+            if (moved === false) {
+                shuffleArray(diagonalCoordsShuffle);
+                for (let i = 0; i < diagonalCoordsShuffle.length; i++) {
+                    const coords = diagonalCoordsShuffle[i];
+                    if (tryMove(pixel, pixel.x + coords[0], pixel.y + coords[1])) {
+                        break;
+                    }
+                }
+            }
+            if (pixel.del !== true) {
+                doHeat(pixel);
+                doBurning(pixel);
+                doElectricity(pixel);
+            }
             return;
         }
         if (typeof defaultBehavior === "function") {
@@ -281,6 +304,20 @@ function applyHighHeatRealismTransitions() {
     installPlasmaStabilityHook();
 }
 
+function coolIonizedPlasma(pixel) {
+    if (pixel.element !== "plasma" || pixel.hhrIonizedFrom === undefined) {
+        return;
+    }
+    if (pixel.temp <= elements.plasma.tempLow) {
+        return;
+    }
+
+    const overTemp = pixel.temp - elements.plasma.tempLow;
+    const radiativeLoss = Math.min(3200, Math.max(10, 8 + overTemp * 0.002 + Math.sqrt(overTemp) * 2));
+    pixel.temp -= radiativeLoss;
+    pixelTempCheck(pixel);
+}
+
 // -- Porcelain --
 // Real porcelain is an excellent thermal insulator (spark plugs, kiln
 // linings) that melts around 1800°C into a viscous ceramic liquid.
@@ -311,4 +348,8 @@ runAfterLoad(function() {
 
 runAfterAutogen(function() {
     applyHighHeatRealismTransitions();
+});
+
+runPerPixel(function(pixel) {
+    coolIonizedPlasma(pixel);
 });

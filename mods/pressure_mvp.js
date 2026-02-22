@@ -146,6 +146,15 @@
         return val < -1.8 ? -1.8 : (val > 1.8 ? 1.8 : val);
     }
 
+    function getPixelGasLift(pixel, info) {
+        var lift = getGasBuoyancyFactor(info);
+        // Matter-derived plasma should not behave like an endlessly rising hot-air balloon.
+        if (pixel && pixel.element === "plasma" && pixel.hhrIonizedFrom !== undefined) {
+            lift *= 0.12;
+        }
+        return lift;
+    }
+
     function getDensityScale(info) {
         var density = getElementDensity(info);
         if (info.state === "gas") {
@@ -417,7 +426,7 @@
             var accelY = -gradY * physics.gradientScale * compressibility / Math.max(0.2, densityScale);
 
             if (info.state === "gas") {
-                accelY -= physics.gasBuoyancy * getGasBuoyancyFactor(info);
+                accelY -= physics.gasBuoyancy * getPixelGasLift(pixel, info);
             } else {
                 accelY += physics.liquidGravity * densityScale;
                 accelX *= 0.34;
@@ -599,7 +608,7 @@
         }
 
         if (info.state === "gas") {
-            var gasLift = getGasBuoyancyFactor(info);
+            var gasLift = getPixelGasLift(pixel, info);
             score += (-dy) * 0.28 * gasLift;
 
             var thisDensity = getElementDensity(info);
