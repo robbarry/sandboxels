@@ -203,3 +203,13 @@ Pressure gameplay MVP with:
 - **pressure_valve**: Directional valve with aperture and max-throughput limits; electricity pulses it open.
 - **barometer**: Reads local pressure (and dynamic local flow speed) with color-coded intensity.
 - **Pressure view (9)**: Visualizes pressure field with red for high pressure and cyan for low pressure.
+
+### `mods/realistic_chemistry_overhaul.js`
+
+Ground-up chemistry lane intended to replace legacy chemistry/velocity stacks when enabled:
+
+- **Conflict handling**: Automatically removes `velocity.js`, `gravity.js`, `pressure_mvp.js`, `chem.js`, and `chemLegacy.js` from `enabledMods`, then reloads.
+- **Element scope**: Hides non-tool legacy elements and introduces a clean `rs_*` element family (`rs_hydrogen`, `rs_oxygen`, `rs_water`, `rs_silicate`, `rs_iron`, `rs_uranium`, `rs_plasma`, etc.).
+- **Physics path**: Uses custom gas movement for `rs_*` gases instead of relying on external velocity/gravity mods.
+- **Chemistry path**: Adds a stoichiometric reaction kernel (`RS_REACTIONS`) for controlled high-level chemistry behavior.
+- **Migration path**: Optionally maps common legacy pixels (`water`, `dirt`, `iron`, `plasma`, etc.) to `rs_*` equivalents on load.
