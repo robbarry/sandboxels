@@ -173,6 +173,26 @@ function installPlasmaDeionizationHook() {
     elements.plasma._hhrDeionizationHook = true;
 }
 
+function installPlasmaStabilityHook() {
+    if (!elements.plasma || elements.plasma._hhrBehaviorHook) {
+        return;
+    }
+    const defaultBehavior = elements.plasma.behavior;
+    elements.plasma.behavior = function(pixel) {
+        if (pixel.hhrIonizedFrom !== undefined) {
+            // Preserve mass for matter-derived plasma so it can cool back down.
+            behaviors.GAS(pixel);
+            return;
+        }
+        if (typeof defaultBehavior === "function") {
+            defaultBehavior(pixel);
+            return;
+        }
+        behaviors.DGAS(pixel);
+    };
+    elements.plasma._hhrBehaviorHook = true;
+}
+
 function pickResult(value) {
     if (Array.isArray(value)) {
         return value[Math.floor(Math.random() * value.length)];
@@ -253,6 +273,7 @@ function applyHighHeatRealismTransitions() {
         addIonizationTransition(name, elements[name]);
     }
     installPlasmaDeionizationHook();
+    installPlasmaStabilityHook();
 }
 
 // -- Porcelain --
