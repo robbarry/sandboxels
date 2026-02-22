@@ -3,6 +3,10 @@
 
 // At extreme temperatures, matter ionizes into plasma.
 const IONIZATION_TEMP = 10000;
+const PLASMA_MIXING_CHANCE = 0.4;
+const PLASMA_MIXING_FRACTION = 0.2;
+const PLASMA_MAX_COMPONENTS = 4;
+const PLASMA_MIN_COMPONENT = 0.03;
 const HIGH_HEAT_EXCLUDE = new Set([
     "plasma",
     "fire",
@@ -87,6 +91,229 @@ function isPlasmaResult(result) {
     return false;
 }
 
+function canonicalizePlasmaSource(elementName) {
+    if (typeof elementName !== "string") {
+        return null;
+    }
+    if (elementName.startsWith("molten_")) {
+        const baseName = elementName.slice(7);
+        if (elements[baseName]) {
+            return baseName;
+        }
+    }
+    if (elements[elementName]) {
+        return elementName;
+    }
+    return null;
+}
+
+function normalizePlasmaComposition(composition) {
+    if (!composition || typeof composition !== "object") {
+        return null;
+    }
+
+    const entries = [];
+    for (const name in composition) {
+        const canonicalName = canonicalizePlasmaSource(name);
+        const share = Number(composition[name]);
+        if (!canonicalName || !Number.isFinite(share) || share <= 0) {
+            continue;
+        }
+        entries.push([canonicalName, share]);
+    }
+
+    if (!entries.length) {
+        return null;
+    }
+
+    const merged = {};
+    for (let i = 0; i < entries.length; i++) {
+        const name = entries[i][0];
+        merged[name] = (merged[name] || 0) + entries[i][1];
+    }
+
+    const mergedEntries = Object.entries(merged).sort(function(a, b) {
+        return b[1] - a[1];
+    }).slice(0, PLASMA_MAX_COMPONENTS);
+
+    let total = 0;
+    for (let i = 0; i < mergedEntries.length; i++) {
+        total += mergedEntries[i][1];
+    }
+    if (!(total > 0)) {
+        return null;
+    }
+
+    const normalized = {};
+    for (let i = 0; i < mergedEntries.length; i++) {
+        const entry = mergedEntries[i];
+        const fraction = entry[1] / total;
+        if (fraction >= PLASMA_MIN_COMPONENT) {
+            normalized[entry[0]] = fraction;
+        }
+    }
+
+    const keys = Object.keys(normalized);
+    if (!keys.length) {
+        const top = mergedEntries[0];
+        normalized[top[0]] = 1;
+    }
+
+    let renormalizedTotal = 0;
+    for (const name in normalized) {
+        renormalizedTotal += normalized[name];
+    }
+    for (const name in normalized) {
+        normalized[name] /= renormalizedTotal;
+    }
+    return normalized;
+}
+
+function getDominantCompositionElement(composition) {
+    let dominantElement = null;
+    let dominantFraction = -1;
+    for (const name in composition) {
+        if (composition[name] > dominantFraction) {
+            dominantFraction = composition[name];
+            dominantElement = name;
+        }
+    }
+    return dominantElement;
+}
+
+function setPlasmaComposition(pixel, composition) {
+    const normalized = normalizePlasmaComposition(composition);
+    if (!normalized) {
+        delete pixel.hhrPlasmaComposition;
+        return null;
+    }
+    pixel.hhrPlasmaComposition = normalized;
+    const dominant = getDominantCompositionElement(normalized);
+    if (dominant) {
+        pixel.hhrIonizedFrom = dominant;
+    }
+    return normalized;
+}
+
+function ensurePlasmaComposition(pixel) {
+    if (!pixel || pixel.element !== "plasma") {
+        return null;
+    }
+    if (pixel.hhrPlasmaComposition) {
+        return setPlasmaComposition(pixel, pixel.hhrPlasmaComposition);
+    }
+
+    const sourceElement = canonicalizePlasmaSource(pixel.hhrIonizedFrom);
+    if (!sourceElement) {
+        return null;
+    }
+    const composition = {};
+    composition[sourceElement] = 1;
+    return setPlasmaComposition(pixel, composition);
+}
+
+function isMatterDerivedPlasma(pixel) {
+    return !!(
+        pixel &&
+        pixel.element === "plasma" &&
+        (
+            pixel.hhrIonizedFrom !== undefined ||
+            pixel.hhrPlasmaComposition !== undefined
+        )
+    );
+}
+
+function blendCompositions(compositionA, compositionB, blendFraction) {
+    const keys = new Set(Object.keys(compositionA).concat(Object.keys(compositionB)));
+    const mixedA = {};
+    const mixedB = {};
+
+    keys.forEach(function(name) {
+        const a = compositionA[name] || 0;
+        const b = compositionB[name] || 0;
+        mixedA[name] = a * (1 - blendFraction) + b * blendFraction;
+        mixedB[name] = b * (1 - blendFraction) + a * blendFraction;
+    });
+
+    return [mixedA, mixedB];
+}
+
+function coolPlasmaToMaterial(pixel) {
+    const composition = ensurePlasmaComposition(pixel);
+    if (!composition) {
+        return canonicalizePlasmaSource(pixel.hhrIonizedFrom);
+    }
+
+    const entries = Object.entries(composition);
+    if (!entries.length) {
+        return canonicalizePlasmaSource(pixel.hhrIonizedFrom);
+    }
+    if (entries.length === 1) {
+        return entries[0][0];
+    }
+
+    let totalWeight = 0;
+    const weightedEntries = [];
+    for (let i = 0; i < entries.length; i++) {
+        const name = entries[i][0];
+        const fraction = entries[i][1];
+        const weight = Math.pow(fraction, 1.35);
+        if (!(weight > 0)) {
+            continue;
+        }
+        weightedEntries.push([name, weight]);
+        totalWeight += weight;
+    }
+
+    if (!(totalWeight > 0)) {
+        return getDominantCompositionElement(composition);
+    }
+
+    let roll = Math.random() * totalWeight;
+    for (let i = 0; i < weightedEntries.length; i++) {
+        roll -= weightedEntries[i][1];
+        if (roll <= 0) {
+            return weightedEntries[i][0];
+        }
+    }
+    return weightedEntries[weightedEntries.length - 1][0];
+}
+
+function mixIonizedPlasma(pixel) {
+    if (!isMatterDerivedPlasma(pixel) || Math.random() >= PLASMA_MIXING_CHANCE) {
+        return;
+    }
+    if (pixel.temp <= elements.plasma.tempLow) {
+        return;
+    }
+
+    const composition = ensurePlasmaComposition(pixel);
+    if (!composition) {
+        return;
+    }
+
+    const coord = adjacentCoords[Math.floor(Math.random() * adjacentCoords.length)];
+    const nx = pixel.x + coord[0];
+    const ny = pixel.y + coord[1];
+    if (outOfBounds(nx, ny) || isEmpty(nx, ny, true)) {
+        return;
+    }
+
+    const other = pixelMap[nx][ny];
+    if (!isMatterDerivedPlasma(other)) {
+        return;
+    }
+
+    const otherComposition = ensurePlasmaComposition(other);
+    if (!otherComposition) {
+        return;
+    }
+
+    const mixed = blendCompositions(composition, otherComposition, PLASMA_MIXING_FRACTION);
+    setPlasmaComposition(pixel, mixed[0]);
+    setPlasmaComposition(other, mixed[1]);
+}
+
 function hasPlasmaTransition(info) {
     if (isPlasmaResult(info.stateHigh)) {
         return true;
@@ -143,13 +370,21 @@ function attachIonizationSourceHook(sourceElement, info) {
         return;
     }
     const previousOnStateHigh = info.onStateHigh;
+    const canonicalSource = canonicalizePlasmaSource(sourceElement);
     info.onStateHigh = function(pixel) {
         if (
             pixel.element === "plasma" &&
             pixel.temp >= IONIZATION_TEMP &&
-            pixel.hhrIonizedFrom === undefined
+            canonicalSource
         ) {
-            pixel.hhrIonizedFrom = sourceElement;
+            if (pixel.hhrIonizedFrom === undefined) {
+                pixel.hhrIonizedFrom = canonicalSource;
+            }
+            if (!pixel.hhrPlasmaComposition) {
+                const composition = {};
+                composition[canonicalSource] = 1;
+                setPlasmaComposition(pixel, composition);
+            }
         }
         if (previousOnStateHigh) {
             previousOnStateHigh(pixel);
@@ -164,9 +399,10 @@ function installPlasmaDeionizationHook() {
     }
     const previousOnStateLow = elements.plasma.onStateLow;
     elements.plasma.onStateLow = function(pixel) {
-        const sourceElement = pixel.hhrIonizedFrom;
+        const sourceElement = coolPlasmaToMaterial(pixel);
         if (sourceElement && elements[sourceElement]) {
             delete pixel.hhrIonizedFrom;
+            delete pixel.hhrPlasmaComposition;
             changePixel(pixel, sourceElement, false);
             maybeOxidizeDeionizedPixel(pixel, sourceElement);
             pixelTempCheck(pixel);
@@ -184,7 +420,7 @@ function installPlasmaStabilityHook() {
     }
     const defaultBehavior = elements.plasma.behavior;
     elements.plasma.behavior = function(pixel) {
-        if (pixel.hhrIonizedFrom !== undefined) {
+        if (isMatterDerivedPlasma(pixel)) {
             // Preserve mass for matter-derived plasma so it can cool back down,
             // but skip built-in air-density lift to avoid unbounded rise.
             shuffleArray(adjacentCoordsShuffle);
@@ -305,7 +541,7 @@ function applyHighHeatRealismTransitions() {
 }
 
 function coolIonizedPlasma(pixel) {
-    if (pixel.element !== "plasma" || pixel.hhrIonizedFrom === undefined) {
+    if (!isMatterDerivedPlasma(pixel)) {
         return;
     }
     if (pixel.temp <= elements.plasma.tempLow) {
@@ -352,5 +588,6 @@ runAfterAutogen(function() {
 });
 
 runPerPixel(function(pixel) {
+    mixIonizedPlasma(pixel);
     coolIonizedPlasma(pixel);
 });
