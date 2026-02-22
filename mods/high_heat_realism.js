@@ -102,13 +102,18 @@ function hasPlasmaTransition(info) {
 }
 
 function addIonizationTransition(name, info) {
-    if (!info || !["solid", "liquid", "gas"].includes(info.state)) {
+    if (!info) {
         return;
     }
     if (HIGH_HEAT_EXCLUDE.has(name)) {
         return;
     }
     if (info.category === "tools" || info.category === "special") {
+        return;
+    }
+    const hasPhysicalState = ["solid", "liquid", "gas"].includes(info.state);
+    const isMoltenPhase = typeof name === "string" && name.startsWith("molten_");
+    if (!hasPhysicalState && !isMoltenPhase) {
         return;
     }
     if (hasPlasmaTransition(info)) {
